@@ -77,8 +77,11 @@ fn print_week(
 
 #[derive(StructOpt, Debug, Clone)]
 struct Params {
-    #[structopt(long, help = "start date: YYYY-mm-dd")]
-    since: Option<String>,
+    #[structopt(long, help = "period start date: YYYY-mm-dd")]
+    from: Option<String>,
+    #[structopt(long, help = "period end date: YYYY-mm-dd")]
+    untill: Option<String>,
+
     #[structopt(long, help = "only output summary")]
     summary: bool,
     #[structopt(long, parse(from_os_str), help = "input data directory")]
@@ -88,18 +91,43 @@ struct Params {
 fn main() -> io::Result<()> {
     let params = Params::from_args();
 
-    let mut since:Option<NaiveDateTime> = match params.since {
-        Some(datetime) => {
-            match NaiveDateTime::parse_from_str(
-                format!("{} 00:00:00", &datetime).as_ref(),
-                "%Y-%m-%d %H:%M:%S"
-            ) {
-                Ok(date) => { Some(date) },
-                Err(_) => { println!("Invalid date {}", datetime); process::exit(1); }
-            }
-        },
-        None => None
+
+    
+    let (mut start_str, start_specified) = match params.from {
+        Some(datetime) => { (datetime.clone(), true) },
+        None => { (String::from("1900-01-01"), false) }
     };
+    start_str = format!("{} 00:00:00", &start_str);
+
+    let (mut end_str, end_specified) = match params.untill {
+        Some(datetime) => { (datetime.clone(), true) },
+        None => { (String::from("2100-01-01"), false) }
+    };
+    end_str = format!("{} 23:59:59", &end_str);
+
+    
+    //let start_str = "2015-09-05 23:56:04".to_string();
+    
+    println!("{:?}", start_str);
+
+    // assert_eq!(parse_from_str("2015-09-05 23:56:04", "%Y-%m-%d %H:%M:%S"),
+    //            Ok(NaiveDate::from_ymd(2015, 9, 5).and_hms(23, 56, 4)));
+    
+    let start_date = 
+        NaiveDateTime::parse_from_str(&start_str,
+            "%Y-%m-%d %H:%M:%S"
+        ).expect("Error parsing start_date");
+
+    let end_date = 
+        NaiveDateTime::parse_from_str(&end_str,
+            "%Y-%m-%d %H:%M:%S"
+        ).expect("Error parsing end_date");
+
+    if start_date > end_date {
+        println!("Invalid date period: from > untill");
+        process::exit(1);
+    }
+    
     let print_weekly = match params.summary {
         true => false,
         _ => true
@@ -141,12 +169,9 @@ fn main() -> io::Result<()> {
         match data {
             Ok(d) => {
                 let s = d.get(0).unwrap();
-
+                
                 let timestamp = s.data.timestamp;
-                if since == None {
-                    since = Some(timestamp);
-                }
-                if timestamp < since.unwrap() {
+                if timestamp < start_date || timestamp > end_date {
                     continue;
                 }
                 
@@ -206,14 +231,15 @@ fn main() -> io::Result<()> {
                 };
                 current_weekday = Some(weekday);
                 
-                week_data.push(format!("{day} {total: >5} km {time: >5} {avg:>4.1} km/h {asc: >4}↗ {desc: >4}↘ {temp: >4}℃",
-                                       day = day,
-                                       total = format!("{:.1}", total_meters/1000.0),
-                                       time = format!("{hours:02}:{mins:02}", hours = hours, mins = mins),
-                                       avg = s.data.avg_speed/1000.0,
-                                       desc = s.data.total_descent,
-                                       asc = s.data.total_ascent,
-                                       temp = s.data.avg_temperature
+                week_data.push(format!(
+                    "{day} {total: >5} km {time: >5} {avg:>4.1} km/h {asc: >4}↗ {desc: >4}↘ {temp: >4}℃",
+                    day = day,
+                    total = format!("{:.1}", total_meters/1000.0),
+                    time = format!("{hours:02}:{mins:02}", hours = hours, mins = mins),
+                    avg = s.data.avg_speed/1000.0,
+                    desc = s.data.total_descent,
+                    asc = s.data.total_ascent,
+                    temp = s.data.avg_temperature
                 ));
                 rides += 1;
                 rides_week += 1;
@@ -230,19 +256,32 @@ fn main() -> io::Result<()> {
             _ => ()
         }
     }
-    if since != None {
-        if print_weekly {
-            println!("");
-        }
-        println!("{label} {date}: {tot:.1} km {time} {rides} rides",             
-                 label = format!("Total since").bold(),
-                 date = since.unwrap().format("%d.%m.%Y"),
-                 time = format_minutes(tot_time),
-                 tot = tot/1000.0, rides = rides
-        );
-    } else {
-        println!("No data");
+    
+    if print_weekly {
+        println!("");
     }
+
+    let period = {
+        let from = start_date.format("%d.%m.%Y").to_string();
+        let untill = end_date.format("%d.%m.%Y").to_string();
+        
+        match (start_specified, end_specified) {
+            (false, false) => { None },
+            (true, false) => { Some(format!("{:} >", from)) },
+            (false, true) => { Some(format!("> {:}", untill)) },
+            (true, true) => { Some(format!("{:} > {:}", from, untill)) }
+        }
+    };
+    
+    println!("{label}{period}: {tot:.1} km, {time} {rides} rides",             
+             label = format!("Total").bold(),
+             period = match period {
+                 None => "".to_string(),
+                 Some(period) => format!(" ({:})", period)
+             },
+             time = format_minutes(tot_time),
+             tot = tot/1000.0, rides = rides
+    );
 
     Ok(())
 }
